@@ -2,10 +2,11 @@ package mtd2018.microservices.account.api;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.logging.Logger;
 import java.util.stream.Collectors;
 import java.util.Random;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -19,7 +20,7 @@ public class Api {
 
 	private Random rand = new Random();
 	
-	protected Logger logger = Logger.getLogger(Api.class.getName());
+	protected static Logger logger = LoggerFactory.getLogger(Api.class.getName());
 	
 	public Api() {
 		accounts = new ArrayList<>();
@@ -35,7 +36,9 @@ public class Api {
 	@RequestMapping("/accounts/{number}")
 	public Account findByNumber(@PathVariable("number") String number) {
 		logger.info(String.format("Account.findByNumber(%s)", number));
-		return accounts.stream().filter(it -> it.getNumber().equals(number)).findFirst().get();
+		Account a = accounts.stream().filter(it -> it.getNumber().equals(number)).findFirst().get();
+		logger.info(String.format("Account.findByNumber: %s", a));
+		return a;
 	}
 	
 	@RequestMapping("/accounts/customer/{customer}")
@@ -54,6 +57,7 @@ public class Api {
 	@RequestMapping("/accounts")
 	public List<Account> findAll() {
 		logger.info("Account.findAll()");
+		logger.info(String.format("Account.findAll: %s", accounts));
 		return accounts;
 	}
 	
