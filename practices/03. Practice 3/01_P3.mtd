@@ -1,0 +1,207 @@
+# Microservices Ecosystem
+
+En esta práctica vamos a investigar cómo se utilizan una serie de servicios
+comunes que suelen utilizarse en una arquitectura de microservicios:
+
+* API gateway
+* Discovery
+* Distributed Tracing
+* Circuit Breaker
+
+Para simplificar al máximo la práctica y centrarnos en el comportamiento de
+estos servicios utilizaremos Spring Cloud, que nos permite utilizar muy fácilmente
+la implementación de Netflix OSS para cada uno de ellos:
+
+* Zuul (API Gateway)
+* Eureka (Discovery)
+* Hystrix (Circuit Breaker)
+
+y utilizaremos Zipkin como implementación del patrón de Distributed Tracing.
+
+Por otra parte, nuestros servicios también van a utilizar Ribbon, otro componente
+de Netflix OSS, un balanceador en el lado de cliente, que trabaja conjuntamente con
+Eureka para facilitar la comunicación entre servicios.
+
+## Setup
+
+```
+sudo apt update
+sudo apt upgrade -y
+
+sudo apt install -y haveged
+sudo apt install -y openjdk-8-jdk
+
+# Maven installation
+cd /opt
+sudo wget http://apache.uvigo.es/maven/maven-3/3.5.3/binaries/apache-maven-3.5.3-bin.tar.gz
+sudo tar xzf apache-maven-3.5.3-bin.tar.gz
+sudo ln -s apache-maven-3.5.3 maven
+
+cat <<EOF | sudo tee /etc/profile.d/mavenenv.sh
+export M2_HOME=/opt/maven
+export PATH=\${M2_HOME}/bin:\${PATH}
+EOF
+
+sudo chmod +x /etc/profile.d/mavenenv.sh
+source /etc/profile.d/mavenenv.sh
+```
+
+Clone the Git repo with the practice considerar
+```
+cd $HOME
+git clone https://github.com/fjar/mtd2018.git
+```
+
+## Part 1 - Discovery and API Gateway
+
+Build code
+```
+cd $HOME/mtd2018/practices/03.\ Practice\ 3/microservices
+mvn package
+```
+Create Docker network
+```
+docker network create mtdnet
+```
+### Build and Run Discovery Service
+```
+cd $HOME/mtd2018/practices/03.\ Practice\ 3/microservices/discovery-service
+docker build -t mtd2018/mtd-discovery-service .
+
+docker run --name discovery -h discovery -p 8761:8761 -d --network mtdnet mtd2018/mtd-discovery-service
+```
+
+We can now go to Eureka console:
+```
+http://<ip>:8761/
+```
+
+### Build and Run Customer Service
+```
+cd $HOME/mtd2018/practices/03.\ Practice\ 3/microservices/customer-service
+docker build -t mtd2018/mtd-customer-service .
+
+docker run --name customer-1 -h customer-1 -p 3333:3333 -d -e "PORT=3333" -e "DISCOVERY_URL=http://discovery:8761" --network mtdnet mtd2018/mtd-customer-service
+docker run --name customer-2 -h customer-2 -p 3334:3334 -d -e "PORT=3334" -e "DISCOVERY_URL=http://discovery:8761" --network mtdnet mtd2018/mtd-customer-service
+```
+
+### Build and Run Account Service
+```
+cd $HOME/mtd2018/practices/03.\ Practice\ 3/microservices/account-service
+docker build -t mtd2018/mtd-account-service .
+
+docker run --name account-1 -h account-1 -p 2222:2222 -d -e "PORT=2222" -e "DISCOVERY_URL=http://discovery:8761" --network mtdnet mtd2018/mtd-account-service
+docker run --name account-2 -h account-2 -p 2223:2223 -d -e "PORT=2223" -e "DISCOVERY_URL=http://discovery:8761" --network mtdnet mtd2018/mtd-account-service
+```
+
+### Build and Run API Gateway service
+```
+cd $HOME/mtd2018/practices/03.\ Practice\ 3/microservices/gateway-service
+docker build -t mtd2018/mtd-gateway-service .
+
+docker run --name apigw-1 -h apigw-1 -p 8765:8765 -d -e "PORT=8765" -e "DISCOVERY_URL=http://discovery:8761" --network mtdnet mtd2018/mtd-gateway-service
+```
+
+### Ready - Try some URLs
+```
+http://<ip>:8765/api/account/accounts
+http://<ip>:8765/api/account/accounts/{id}
+
+http://<ip>:8765/api/customer/customers
+http://<ip>:8765/api/customer/customers/{id}
+```
+Algunas veces,al pedir la última URL, veremos que se devuelve un error
+
+Paramos y eliminamos los servicios Account y Customer, que modificaremos en la
+segunda parte de la práctica.
+```
+docker stop account-1 account-2 customer-1 customer-2
+docker rm -v account-1 account-2 customer-1 customer-2
+```
+
+## Part 2 - Distributed Tracing and Log Aggregation
+
+Vamos a modificar los servicios Account y Customer para que envíen sus logs a una
+plataforma ELK (ElasticSearch, LogStash, Kibana).
+
+También vamos a intrumentar estos servicios para que automáticamente se capture
+información sobre las llamadas HTTP que reciben y que se hacen entre ellos.
+
+En primer lugar, levantamos los servicios ELK:
+```
+docker run --name elasticsearch -h elasticsearch -p 9200:9200 -p 9300:9300 -d --network mtdnet elasticsearch
+docker run --name kibana -h kibana -p 5601:5601 -d --network mtdnet kibana
+docker run --name logstash -h logstash -p 5000:5000 -p 9600:9600 -d --network mtdnet logstash -e 'input { tcp { port => 5000 codec => "json" } } output { elasticsearch { hosts => [ elasticsearch ] index => "micro-%{serviceName}" } }'
+```
+Checkout la rama 'Zipkin' del repositorio de las prácticas, que contiene las
+modificaciones necesarias para esta segunda parte de la práctica:
+```
+cd $HOME/mtd2018/practices/03.\ Practice\ 3/microservices
+mvn clean
+cd $HOME/mtd2018
+git checkout Zipkin
+cd $HOME/mtd2018/practices/03.\ Practice\ 3/microservices
+mvn package
+```
+
+### Build and Run Zipkin service
+```
+cd $HOME/mtd2018/practices/03.\ Practice\ 3/microservices/zipkin-service
+docker build -t mtd2018/mtd-zipkin-service .
+
+docker run --name zipkin -h zipkin -p 9411:9411 -d --network mtdnet mtd2018/mtd-zipkin-service
+```
+Echar un vistazo a la web de Zipkin
+```
+http://<ip>:9411/
+```
+
+Reconstruir y lanzar de nuevo los servicios Account y Customer, como se hizo en la
+parte 1 de la práctica.
+
+Realizar algunas peticiones a los servicios Account y Customer y volver a revisar
+la web de Zipkin.
+
+Podemos visitar la web de Kibana:
+```
+http://<ip>:5601
+```
+La primera vez nos pedirá completar los valores para el Index Pattern y el Time Filter
+filed name:
+```
+Index pattern: micro-*
+Time Filter field name: @timestamp
+```
+Creamos el index pattern y ya podremos consultar los logs enviados por los servicios
+Account y Customer, que han sido ingestados en ElasticSearch via LogStash.
+
+Paramos y eliminamos los servicios Account y Customer, que modificaremos en la
+tercera parte de la práctica.
+```
+docker stop account-1 account-2 customer-1 customer-2
+docker rm -v account-1 account-2 customer-1 customer-2
+```
+## Part 3 - Circuit Breaker
+
+Finalmente, vamos a hacer uso de Hystrix para que actúe como Circuit Breaker y
+corrija rápidamente errores que se den en las comunicaciones entre nuestros servicios.
+
+En este caso, se proporcionará una respuesta preconfigurada cuando el servicio Account
+tarda mucho en responder.
+
+Checkout la rama 'Hystrix' del repositorio de las prácticas, que contiene las
+modificaciones necesarias para esta segunda parte de la práctica:
+```
+cd $HOME/mtd2018/practices/03.\ Practice\ 3/microservices
+mvn clean
+cd $HOME/mtd2018
+git checkout Hystrix
+cd $HOME/mtd2018/practices/03.\ Practice\ 3/microservices
+mvn package
+```
+Reconstruir y lanzar de nuevo los servicios Account y Customer, como se hizo en la
+parte 1 de la práctica.
+
+Si ahora realizamos algunas peticiones a los servicios Account y Customer veremos que
+nunca se produce una error por timeout, como ocurría antes, sino queen algunos casos
+la lista de cuentas para un cliente es una lista vacía.
