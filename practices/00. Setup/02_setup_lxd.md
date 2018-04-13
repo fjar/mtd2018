@@ -1,7 +1,7 @@
 # Setup LXD
 ```
-sudo update
-sudo upgrade -y
+sudo apt update
+sudo apt upgrade -y
 
 sudo apt remove -y --purge lxd lxd-client
 sudo snap install lxd
